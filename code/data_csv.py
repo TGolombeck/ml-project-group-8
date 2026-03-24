@@ -29,6 +29,9 @@ def main():
     # We ignore all rows with NaN/Null/None values.
     all_data = all_data.dropna()
 
+    # Drop any duplicate reviews.
+    all_data = all_data.drop_duplicates()
+
     # We then add that DataFrame to a new file to be used in our Models.
     all_data.to_csv("../data/all_data.csv", index=False)
 
