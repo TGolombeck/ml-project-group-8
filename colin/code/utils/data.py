@@ -1,3 +1,4 @@
+import torch
 import pandas as pd
 import numpy as np
 from torch.utils.data import Dataset
@@ -9,8 +10,16 @@ class ReviewDataset(Dataset):
         self.labels = labels
 
     def __getitem__(self, idx):
-        item = {key: torch.tensor(val[idx]) 
-                for key, val in self.encodings.items()}
+        item = {}
+        for key, val in self.encodings.items():
+            value = val[idx]
+            if isinstance(value, torch.Tensor):
+                item[key] = value.detach().clone()
+            else:
+                item[key] = torch.tensor(value)
+
+        # Train the transformer as a language model target.
+        item["labels"] = item["input_ids"].detach().clone()
         return item
 
     def __len__(self):
