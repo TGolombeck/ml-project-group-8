@@ -48,14 +48,14 @@ class EncoderLayer(nn.Module):
     def __init__(self, d_model, num_heads, d_ff, dropout=0.1):
         super().__init__()
         self.attn = MultiHeadAttention(d_model, num_heads)
-        self.ff   = FeedForward(d_model, d_ff, dropout)
+        self.ffn = FeedForward(d_model, d_ff, dropout)
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
         self.drop  = nn.Dropout(dropout)
     
     def forward(self, x, mask=None):
         x = self.norm1(x + self.drop(self.attn(x, x, x, mask)))
-        x = self.norm2(x + self.drop(self.ff(x)))
+        x = self.norm2(x + self.drop(self.ffn(x)))
         return x
 
 
@@ -106,35 +106,6 @@ class FeedForward(nn.Module):
     
     def forward(self, x):
         return self.net(x)
-class Transformer(nn.Module):
-    def __init__(self, src_vocab, tgt_vocab, d_model=512, num_heads=8,
-                 num_layers=6, d_ff=2048, dropout=0.1):
-        super().__init__()
-        self.src_emb = nn.Embedding(src_vocab, d_model)
-        self.tgt_emb = nn.Embedding(tgt_vocab, d_model)
-        self.pos_enc = PositionalEncoding(d_model, dropout=dropout)
-        
-        self.encoder = nn.ModuleList([EncoderLayer(d_model, num_heads, d_ff, dropout) for _ in range(num_layers)])
-        self.decoder = nn.ModuleList([DecoderLayer(d_model, num_heads, d_ff, dropout) for _ in range(num_layers)])
-        self.fc_out  = nn.Linear(d_model, tgt_vocab)
-        self.scale   = math.sqrt(d_model)
-    
-    def encode(self, src, src_mask=None):
-        x = self.pos_enc(self.src_emb(src) * self.scale)
-        for layer in self.encoder:
-            x = layer(x, src_mask)
-        return x
-    
-    def decode(self, tgt, enc_out, src_mask=None, tgt_mask=None):
-        x = self.pos_enc(self.tgt_emb(tgt) * self.scale)
-        for layer in self.decoder:
-            x = layer(x, enc_out, src_mask, tgt_mask)
-        return self.fc_out(x)
-    
-    def forward(self, src, tgt, src_mask=None, tgt_mask=None):
-        enc_out = self.encode(src, src_mask)
-        return self.decode(tgt, enc_out, src_mask, tgt_mask)
-
         
 class MultiHeadAttention(nn.Module):
     def __init__(self, d_model, num_heads):
