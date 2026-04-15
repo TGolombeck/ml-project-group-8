@@ -160,10 +160,12 @@ def main():
     # DecisionTree Model and to test the DecisionTree Model.
     base_dir = os.path.dirname(csv_file_path)
 
-    train_data_path = os.path.join(base_dir, f"dt_training_data{random_state}.csv")
-    test_data_path  = os.path.join(base_dir, f"dt_testing_data{random_state}.csv")
-    train_tfidf_path = os.path.join(base_dir, f"dt_training_tfidf{random_state}.json")
-    test_tfidf_path  = os.path.join(base_dir, f"dt_testing_tfidf{random_state}.json")
+    dt_dir = os.path.join(base_dir, "dt_data")
+
+    train_data_path = os.path.join(dt_dir, f"dt_training_data{random_state}.csv")
+    test_data_path  = os.path.join(dt_dir, f"dt_testing_data{random_state}.csv")
+    train_tfidf_path = os.path.join(dt_dir, f"dt_training_tfidf{random_state}.json")
+    test_tfidf_path  = os.path.join(dt_dir, f"dt_testing_tfidf{random_state}.json")
 
     # Save train/test CSVs.
     pd.DataFrame({"review": train_data, "star_rating": train_target}).to_csv(train_data_path, index=False)
