@@ -7,7 +7,7 @@ import pandas as pd
 import re
 import sys
 
-# This is used to clean the text from all of the reviews before calculating TF-IDF.
+# This is used to clean the text from all of the reviews.
 def clean_text(text):
     if not isinstance(text, str):
         return ""
@@ -21,11 +21,11 @@ def clean_text(text):
     # Remove any newline or tab characters
     text = text.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
 
-    # Replace any punctuation and special characters with space
+    # Replace any punctuation and special characters with ''
     # We use python's built in regualar expression library to do so (re)
     # What this is doing is it is taking a string literal, and replacing any character
     # that is not a word or a space with a space character.
-    text = re.sub(r'[^\w\s]', ' ', text)
+    text = re.sub(r'[^\w\s]', '', text)
 
     # Make sure all spaces are collasped into a single space.
     # "Hello          World" -> "Hello World" 
@@ -36,53 +36,36 @@ def clean_text(text):
 
     return text
 
-# This method calculates the Term Frequency for one review.
-def calculate_tf(tokens, all_words):
-    # Create a dictionary for the review that holds all words and frequency within the review.
-    tf_dict = {}
+# This method calculates the Binary Feature Vector for one review.
+def calculate_features(tokens, all_words):
+    # Create a dictionary for the review that holds all words and binary state.
+    feature_dict = {}
 
     # Calculate the total amount of words in the review.
     total_words = len(tokens)
 
-    # Calculate the term frequency of each word within all_words and add it to the dictionary.
     for word in all_words:
-        # If total_words is less than 0, set the tf_value to 0.
-        tf_dict[word] = tokens.count(word) / total_words if total_words > 0 else 0
-
+        if word in tokens:
+            feature_dict[word] = 1
     
-    return tf_dict
+    return feature_dict
 
-# This method calculates the Inverse Document Frequency.
-def calculate_idf(all_tokens, all_words):
-    # Create a dictionary for the review that holds all words and IDF.
-    idf_dict = {}
-
-    # Calculate the total amount of tokens.
+# Determines the stopwords that appear in almost every review.
+def build_stopwords(all_tokens, all_words, threshold=0.7):
+    # Get the number of tokens.
     num_tokens = len(all_tokens)
+
+    # Initialize the stopword set.
+    stopword = set()
+
+    # Loop through all of the words, if a word appears in >=threshold amount of reviews,
     for word in all_words:
-        
-        # Sum together the number of reviews that contain the word.
         count = sum(1 for tokens in all_tokens if word in tokens)
 
-        # Calculate Smooth IDF for the word.
-        idf_dict[word] = math.log((num_tokens + 1) / (count + 1)) + 1
-
-    return idf_dict
-
-# Computes the TF-IDF for a single review.
-def calculate_tfidf(tf_dict, idf_dict, threshold=0):
-    # Create a dictionary for the review that holds all words and TF-IDF.
-    tfidf_dict = {}
-
-    for word in tf_dict:
-        # Calculate the TF-IDF value.
-        tfidf_value = tf_dict[word] * idf_dict[word]
-
-        # Check to make sure that the value is above a threshold (0.01) for the Training Data.
-        if tfidf_value >= threshold:
-            tfidf_dict[word] = tfidf_value
-
-    return tfidf_dict
+        if count / num_tokens > threshold:
+            stopword.add(word)
+    
+    return stopword
 
 def main():
     
@@ -135,27 +118,43 @@ def main():
     # Sort the set alphabetically.
     all_words = sorted(list(all_words))
 
-    # Creates a list of training Dictionaries with the respective Term Frequency for each review.
-    tf_train = [calculate_tf(tokens, all_words) for tokens in train_tokens]
+    # The frequency that a word appears in a review.
+    doc_freq = {
+        word: sum(1 for token in train_tokens if word in token)
+        for word in all_words
+    }
 
-    # Create a Dictionary of all words and Inverse Document Frequencies for the Training Data.
-    idf_train = calculate_idf(train_tokens, all_words)
+    # Remove any word that appears 2 or less times or appear too much.
+    min_word_count = 5
+    max_word_count = 0.8 * len(train_tokens)
 
-    # Calculates the Training TF-IDF Dictionaries for all reviews.
-    tfidf_train = [calculate_tfidf(tf_dict, idf_train, threshold=0.01) for tf_dict in tf_train]
+    all_words = [
+    word for word in all_words
+    if doc_freq[word] >= min_word_count
+    and doc_freq[word] <= max_word_count
+    ]
 
-    # Once the TF-IDF Dictionaries are created for the Training Data, we do the same for the Testing Data.
+    # Find and Remove Stopwords from all_words.
+    stopwords = build_stopwords(train_tokens, all_words)
+
+    all_words = [
+        word for word in all_words 
+        if word not in stopwords
+    ]
+
+    # Limit the amount of words in all_words.
+    all_words = all_words[:2000]
+
+    # Creates a list of training Dictionaries with the respective Binary Feature Vector for each review.
+    feature_train = [calculate_features(tokens, all_words) for tokens in train_tokens]
+
+    # We also need to tokenize the test data for the test set.
     test_tokens = [review.split() for review in test_data]
 
-    # Creates a list of Testing Dictionaries with the respective Term Frequency for each review.
-    # We use all of the words in the TF-IDF for the Training Data so that no new words get added
-    # and no old words get removed.
-    tf_test = [calculate_tf(tokens, list(tfidf_train[0].keys())) for tokens in test_tokens]
+    # Creates a list of testing Dictionaries with the respective Binary Feature Vector for each review.
+    feature_test = [calculate_features(tokens, all_words) for tokens in test_tokens]
 
-    # Create the TF-IDF Dictionaries for the Testing Data using the IDF from the Training Data.
-    tfidf_test = [calculate_tfidf(tf_dict, idf_train) for tf_dict in tf_test]
-
-    # Once the TF-IDF Dictionaries are created for both Training and Testing Data,
+    # Once the Feature Dictionaries are created for both Training and Testing Data,
     # we can save all of the information to different files to be used to build the 
     # DecisionTree Model and to test the DecisionTree Model.
     base_dir = os.path.dirname(csv_file_path)
@@ -164,19 +163,19 @@ def main():
 
     train_data_path = os.path.join(dt_dir, f"dt_training_data{random_state}.csv")
     test_data_path  = os.path.join(dt_dir, f"dt_testing_data{random_state}.csv")
-    train_tfidf_path = os.path.join(dt_dir, f"dt_training_tfidf{random_state}.json")
-    test_tfidf_path  = os.path.join(dt_dir, f"dt_testing_tfidf{random_state}.json")
+    train_feature_path = os.path.join(dt_dir, f"dt_training_feature{random_state}.json")
+    test_feature_path  = os.path.join(dt_dir, f"dt_testing_feature{random_state}.json")
 
     # Save train/test CSVs.
     pd.DataFrame({"review": train_data, "star_rating": train_target}).to_csv(train_data_path, index=False)
     pd.DataFrame({"review": test_data, "star_rating": test_target}).to_csv(test_data_path, index=False)
 
-    # Save train/test TF-IDF JSONs.
-    with open(train_tfidf_path, "w") as file:
-        json.dump(tfidf_train, file)
+    # Save train/test Feature JSONs.
+    with open(train_feature_path, "w") as file:
+        json.dump(feature_train, file)
 
-    with open(test_tfidf_path, "w") as file:
-        json.dump(tfidf_test, file)
+    with open(test_feature_path, "w") as file:
+        json.dump(feature_test, file)
 
 if __name__ == "__main__":
     main()

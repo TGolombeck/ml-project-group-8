@@ -8,11 +8,12 @@ import random
 import re
 import sys
 from build_dt_model import ReviewDecisionTreeNode
+from build_dt_model import compute_class_weights
 from build_dt_model import convert_node_to_json
 
 def main():
     if len(sys.argv) != 3:
-        print("Usage: python build_many_dt_models.py <path_to_training_tfidf_json> <path_to_training_data_csv>")
+        print("Usage: python build_many_dt_models.py <path_to_training_feature_json> <path_to_training_data_csv>")
         sys.exit(1)
 
     json_file_path = sys.argv[1]
@@ -23,7 +24,7 @@ def main():
         sys.exit(1)
 
     with open(json_file_path, "r") as file:
-        tfidf_train = json.load(file)
+        feature_train = json.load(file)
 
     csv_file_path = sys.argv[2]
 
@@ -46,21 +47,19 @@ def main():
     max_depth = [5, 10, 15]
     min_samples_split = [2, 5, 10]
     min_samples_leaf = [1, 2, 5]
-    min_info_gain = [0, 1e-3]
-    max_features = [100, None]
-    max_thresholds = [10, 20]
+    min_info_gain = [0, 1e-4]
+    max_features = [200, 500, None]
 
     param_grid = []
 
     # Add all combinations of hyperparameters to the param_grid list.
-    for c, md, mss, msl, mig, mf, mt in product(
+    for c, md, mss, msl, mig, mf in product(
         criterion, 
         max_depth, 
         min_samples_split, 
         min_samples_leaf, 
         min_info_gain, 
-        max_features, 
-        max_thresholds):
+        max_features):
 
         param_grid.append({
             "criterion": c,
@@ -69,16 +68,18 @@ def main():
             "min_samples_leaf": msl,
             "min_info_gain": mig,
             "max_features": mf,
-            "max_thresholds": mt
         })
 
     # Create a ReviewDecisionTreeNode instance to build the models. 
     dt = ReviewDecisionTreeNode()
 
-    # Extract the random state number used in the training TF-IDF filename.
+    # Extract the random state number used in the training Feature filename.
     filename = os.path.basename(json_file_path)
     match = re.search(r'(\d+)\.json', filename)
     dataset_id = match.group(1) if match else "0"
+
+    # Obtain the class weights to be used in training.
+    class_weights = compute_class_weights(train_target)
 
     # Loop over each combination of hyperparameters to build a model and save it as a JSON file.
     for index, params in enumerate(param_grid):
@@ -88,7 +89,7 @@ def main():
         random.seed(42 + index)
 
         # Build the Decision Tree using the current set of hyperparameters and convert it to JSON format.
-        root = dt.build_tree(tfidf_train, train_target, params)
+        root = dt.build_tree(feature_train, train_target, params, class_weights)
 
         # Convert the tree to a JSON-serializable format.
         tree_json = convert_node_to_json(root)
@@ -105,7 +106,6 @@ def main():
             f"_MSL{params['min_samples_leaf']}"
             f"_MIG{params['min_info_gain']}"
             f"_MF{mf}"
-            f"_MT{params['max_thresholds']}"
             f"_{dataset_id}.json"
         )
 

@@ -18,45 +18,51 @@ class ReviewDecisionTreeNode:
         self.right = right
         self.value = value
 
-    # Used to calculate the Gini Impurity at each threshold to determine the best split.
-    def gini(self, ratings):
-        # The total ratings within a review.
-        total_ratings = len(ratings)
-        
+    # Used to get the weighted size of the Child Nodes.
+    def weighted_child_size(self, ratings, class_weights):
+        return sum(class_weights.get(r, 1.0) for r in ratings)
+
+    # Used to calculate the Weighted Gini Impurity at each threshold to determine the best split.
+    def weighted_gini(self, ratings, class_weights):
         # Count the number of appearances of each rating.
         rating_counts = {}
         for rating in ratings:
             rating_counts[rating] = rating_counts.get(rating, 0) + 1
 
-        # Calculate Gini Impurity (1 - Summation probabilites squared).
-        gini = 1
-        for count in rating_counts.values():
-            probability = count / total_ratings
-            gini -= probability ** 2
+        # Calculate the Weighted Total.
+        weighted_total = 0
+        for rating in rating_counts:
+            weighted_total += class_weights.get(rating, 1.0) * rating_counts[rating]
 
-        return gini
+        # Calculate Weighted Gini Impurity (1 - Summation weights*probabilites squared).
+        weighted_gini = 1
+        for rating in rating_counts:
+            weight = class_weights.get(rating, 1.0)
+            probability = (weight * rating_counts[rating])/ weighted_total
+            weighted_gini -= probability ** 2
+
+        return weighted_gini
 
     # Calculate the Gini Gain using Weighted Ginis.
-    def gini_gain(self, parent, left, right):
-        # The total number of ratings in the parent node.
-        total_ratings = len(parent)
-
+    def gini_gain(self, parent, left, right, class_weights):
         # Calculate the Ginis of the parent node and the left/right splits.
-        parent_gini = self.gini(parent)
-        left_child_gini = self.gini(left)
-        right_child_gini = self.gini(right)
+        parent_gini = self.weighted_gini(parent, class_weights)
+        left_child_gini = self.weighted_gini(left, class_weights)
+        right_child_gini = self.weighted_gini(right, class_weights)
+
+        # Use the Weighted Sizes to calculate Child Gini.
+        left_weight = self.weighted_child_size(left, class_weights)
+        right_weight = self.weighted_child_size(right, class_weights)
+        total_weight = left_weight + right_weight
 
         # Calculate the weighted gini of the child splits.
-        weighted_child_gini = (len(left)/total_ratings)*left_child_gini + (len(right)/total_ratings)*right_child_gini
+        weighted_child_gini = (left_weight/total_weight)*left_child_gini + (right_weight/total_weight)*right_child_gini
 
         # Return the Gini Gain.
         return parent_gini - weighted_child_gini
 
-    # Used to calculate the Entropy at each threshold to determine the best split.
-    def entropy(self, ratings):
-        # The total ratings within a review.
-        total_ratings = len(ratings)
-
+    # Used to calculate the Weighted Entropy at each threshold to determine the best split.
+    def weighted_entropy(self, ratings, class_weights):
         # Count the number of appearances of each rating.
         rating_counts = {}
         for rating in ratings:
@@ -64,85 +70,88 @@ class ReviewDecisionTreeNode:
                 rating_counts[rating] = 0
             rating_counts[rating] += 1
         
-        # Calculate Entropy (- Summation probabilites log2 probabilities).
-        entropy = 0
-        for count in rating_counts.values():
-            probability = count / total_ratings
-            entropy -= probability * math.log2(probability)
+        # Calculate the Weighted Total.
+        weighted_total = 0
+        for rating in rating_counts:
+            weighted_total += class_weights.get(rating, 1.0) * rating_counts[rating]
+
+        # Calculate Entropy (- Summation weight*probabilites log2 weight*probabilities).
+        weighted_entropy = 0
+        for rating in rating_counts:
+            weight = class_weights.get(rating, 1.0)
+            probability = (weight * rating_counts[rating]) / weighted_total
+            weighted_entropy -= probability * math.log2(probability)
         
-        return entropy
+        return weighted_entropy
     
     # Calculate the Information Gain using Weighted Entropies.
-    def information_gain(self, parent, left, right):
-        # The total number of ratings in the parent node.
-        total_ratings = len(parent)
-
+    def information_gain(self, parent, left, right, class_weights):
         # Calculate the Entropies of the parent node and the left/right splits.
-        parent_entropy = self.entropy(parent)
-        left_child_entropy = self.entropy(left)
-        right_child_entropy = self.entropy(right)
+        parent_entropy = self.weighted_entropy(parent, class_weights)
+        left_child_entropy = self.weighted_entropy(left, class_weights)
+        right_child_entropy = self.weighted_entropy(right, class_weights)
+
+        # Use the Weighted Sizes to calculate Child Entropy.
+        left_weight = self.weighted_child_size(left, class_weights)
+        right_weight = self.weighted_child_size(right, class_weights)
+        total_weight = left_weight + right_weight
 
         # Calculate the weighted entropy of the child splits.
-        weighted_child_entropy = (len(left)/total_ratings)*left_child_entropy + (len(right)/total_ratings)*right_child_entropy
+        weighted_child_entropy = (left_weight/total_weight)*left_child_entropy + (right_weight/total_weight)*right_child_entropy
 
         # Return the Information Gain.
         return parent_entropy - weighted_child_entropy
     
+    # Used to determine the Majority Class in a Leaf Node.
+    def weighted_majority(self, ratings, class_weights):
+        scores = {}
+        for r in ratings:
+            scores[r] = scores.get(r, 0) + class_weights.get(r, 1.0)
+        return max(scores, key=scores.get)
+
     # Calculate the Best Word and Threshold to split the Tree at.
-    def best_split(self, tfidf_vectors, ratings, params):
+    def best_split(self, feature_vectors, ratings, params, class_weights):
         # Initialize Best Word, Threshold and Gain.
         best_gain = -1
         best_word = None
         best_threshold = None
 
         # Collect all of the words to limit the number of features to check for the split.
-        all_words = list(tfidf_vectors[0].keys())
+        all_words = list(feature_vectors[0].keys()) if feature_vectors else []
 
         if params["max_features"] is not None:
-            max_features = min(params["max_features"], len(all_words))
-            features = random.sample(all_words, min(params["max_features"], max_features))
+            features = random.sample(all_words, min(params["max_features"], len(all_words)))
         else:
             features = all_words
 
         # Loop over each word in the potentially limited features to determine the best split.
         for word in features:
+            # Binary split: word absent (0) vs present (1)
+            left_ratings = [ratings[i] for i in range(len(feature_vectors))
+                            if feature_vectors[i].get(word, 0) == 0]
 
-            # Obtain a list of all tfidf values for the word.
-            word_values = [review_vector.get(word, 0) for review_vector in tfidf_vectors]
-            
-            # Create a set that contains every TF-IDF value (thresholds) to check for the word.
-            thresholds = list(set(word_values))
+            right_ratings = [ratings[i] for i in range(len(feature_vectors))
+                            if feature_vectors[i].get(word, 0) == 1]
 
-            # Limit the number of thresholds to check for the word to max_thresholds.
-            thresholds = thresholds[:params["max_thresholds"]]
-
-            for threshold in thresholds:
-                # Create lists of left/right ratings for each threshold.
-                left_ratings = [ratings[index] for index in range(len(tfidf_vectors))
-                                if tfidf_vectors[index].get(word, 0) <= threshold]
+            # Skip any invalid splits.
+            if len(left_ratings) == 0 or len(right_ratings) == 0:
+                continue
                 
-                right_ratings = [ratings[index] for index in range(len(tfidf_vectors))
-                                if tfidf_vectors[index].get(word, 0) > threshold]
-                
-                # Skip any invalid splits.
-                if len(left_ratings) == 0 or len(right_ratings) == 0:
-                    continue
-                
-                # Calculate the Gain for the split based on the criterion.
-                if params["criterion"] == "gini":
-                    gain = self.gini_gain(ratings, left_ratings, right_ratings)
-                else:
-                    gain = self.information_gain(ratings, left_ratings, right_ratings)
+            # Calculate the Gain for the split based on the criterion.
+            if params["criterion"] == "gini":
+                gain = self.gini_gain(ratings, left_ratings, right_ratings, class_weights)
+            else:
+                gain = self.information_gain(ratings, left_ratings, right_ratings, class_weights)
 
-                if gain > best_gain:
-                    best_gain = gain
-                    best_word = word
-                    best_threshold = threshold
+            if gain > best_gain:
+                best_gain = gain
+                best_word = word
+                best_threshold = 0.5 # Since Binary Best threshold is always 0.5.
 
         return best_gain, best_word, best_threshold
     
-    # This is used to build the entire DT using the TF-IDF vectors and Ratings.
-    def build_tree(self, tfidf_vectors, ratings, params, depth=0):
+    # This is used to build the entire DT using the Feature vectors and Ratings.
+    def build_tree(self, feature_vectors, ratings, params, class_weights, depth=0):
         # If all ratings are the same, Return a new Leaf Node.
         if len(set(ratings)) == 1:
             return ReviewDecisionTreeNode(value=ratings[0])
@@ -150,46 +159,46 @@ class ReviewDecisionTreeNode:
         # If the depth is greater than or equal to the max depth
         # create a new Leaf Node.
         if depth >= params["max_depth"]:
-            majority_rating = max(set(ratings), key=ratings.count)
+            majority_rating = self.weighted_majority(ratings, class_weights)
             return ReviewDecisionTreeNode(value=majority_rating)
     
         # Stop if too few samples.
         if len(ratings) < params["min_samples_split"]:
-            majority_rating = max(set(ratings), key=ratings.count)
+            majority_rating = self.weighted_majority(ratings, class_weights)
             return ReviewDecisionTreeNode(value=majority_rating)
 
         # Find the Best Split.
-        info_gain, word, threshold = self.best_split(tfidf_vectors, ratings, params)
+        info_gain, word, threshold = self.best_split(feature_vectors, ratings, params, class_weights)
 
         # If no valuable information can be gained or no best word is found
         # create a new Leaf Node.
         if info_gain <= params["min_info_gain"] or word is None:
-            majority_rating = max(set(ratings), key=ratings.count)
+            majority_rating = self.weighted_majority(ratings, class_weights)
             return ReviewDecisionTreeNode(value=majority_rating)
 
         # Split the Data.
-        left_tfidf_vectors = []
-        right_tfidf_vectors = []
+        left_feature_vectors = []
+        right_feature_vectors = []
         left_ratings = []
         right_ratings = []
 
-        for index, review_vector in enumerate(tfidf_vectors):
+        for index, review_vector in enumerate(feature_vectors):
             value = review_vector.get(word, 0)
             if value <= threshold:
-                left_tfidf_vectors.append(review_vector)
+                left_feature_vectors.append(review_vector)
                 left_ratings.append(ratings[index])
             else:
-                right_tfidf_vectors.append(review_vector)
+                right_feature_vectors.append(review_vector)
                 right_ratings.append(ratings[index])
 
         # Check if the the leaf nodes would be too small after the split, if so create a new Leaf Node.
         if len(left_ratings) < params["min_samples_leaf"] or len(right_ratings) < params["min_samples_leaf"]:
-            majority_rating = max(set(ratings), key=ratings.count)
+            majority_rating = self.weighted_majority(ratings, class_weights)
             return ReviewDecisionTreeNode(value=majority_rating)
 
         # Create the Nodes.
-        left_node = self.build_tree(left_tfidf_vectors, left_ratings, params, depth + 1)
-        right_node = self.build_tree(right_tfidf_vectors, right_ratings, params, depth + 1)
+        left_node = self.build_tree(left_feature_vectors, left_ratings, params, class_weights, depth + 1)
+        right_node = self.build_tree(right_feature_vectors, right_ratings, params, class_weights, depth + 1)
 
         return ReviewDecisionTreeNode(feature=word, threshold=threshold, left=left_node, right=right_node)
     
@@ -205,9 +214,31 @@ def convert_node_to_json(node):
         "right": convert_node_to_json(node.right)
     }
 
+# Used to calculate the Class Weights to later Calculate the Weighted Entropy/Gini.
+def compute_class_weights(all_ratings):
+    class_counts = {}
+
+    # Count the number of times each Rating appears.
+    for rating in all_ratings:
+        if rating not in class_counts:
+            class_counts[rating] = 0
+        class_counts[rating] += 1
+
+    total = len(all_ratings)
+    num_classes = len(class_counts)
+
+    class_weights = {}
+
+    # Calculate the Inverse Frequency of each class to use as the Weights (Sqrt for Softer Weights).
+    for rating, rating_count in class_counts.items():
+        average_num_ratings = total / num_classes
+        class_weights[rating] = math.sqrt(average_num_ratings/ rating_count)
+
+    return class_weights
+
 def main():
     if len(sys.argv) != 3:
-        print("Usage: python build_dt_model.py <path_to_training_tfidf_json> <path_to_training_data_csv>")
+        print("Usage: python build_dt_model.py <path_to_training_feature_json> <path_to_training_data_csv>")
         sys.exit(1)
 
     json_file_path = sys.argv[1]
@@ -218,7 +249,7 @@ def main():
         sys.exit(1)
 
     with open(json_file_path, "r") as file:
-        tfidf_train = json.load(file)
+        feature_train = json.load(file)
 
     csv_file_path = sys.argv[2]
 
@@ -231,15 +262,14 @@ def main():
 
     train_target = all_data['star_rating'].tolist()
 
-    # Initialize the hyperparamters for the Decision Tree.
+    # Initialize the hyperparamters for the Decision Tree (Using best Hyperparameters found in Evaluation).
     params = {
         "criterion": "entropy",
-        "max_depth": 10,
-        "min_samples_split": 5,
-        "min_samples_leaf": 2,
-        "min_info_gain": 1e-3,
-        "max_features": 100,
-        "max_thresholds": 20
+        "max_depth": 15,
+        "min_samples_split": 2,
+        "min_samples_leaf": 5,
+        "min_info_gain": 0,
+        "max_features": None
     }
 
     dt = ReviewDecisionTreeNode()
@@ -247,8 +277,11 @@ def main():
     # Set random seed for reproducibility.
     random.seed(42)
 
-    # After all of the files are loaded, create the DT,
-    root = dt.build_tree(tfidf_train, train_target, params)
+    # Obtain the class weights to be used in training.
+    class_weights = compute_class_weights(train_target)
+
+    # After all of the files are loaded, create the DT.
+    root = dt.build_tree(feature_train, train_target, params, class_weights)
 
     # Convert the DT to a dictionary and then save it to a JSON file.
     tree_json = convert_node_to_json(root)
@@ -258,7 +291,7 @@ def main():
     data_dir = os.path.dirname(base_dir)
     dt_dir = os.path.join(data_dir, "trained_dt_models")
 
-    # Extract the random state number used in the training TF-IDF filename.
+    # Extract the random state number used in the training Feature filename.
     match = re.search(r'(\d+)\.json', filename)
     random_state = match.group(1) if match else "0"
 
